@@ -1,215 +1,192 @@
-# Projet settings.
-include project.mk
-
-# Working directories.
-BIN_D=./bin
-TEX_D=./tex
-DOCS_D=./docs
-WEB_D=./_site
-
-# Filesets.
-BIB_SRC=${TEX_D}/bib.bib
-TEX_SRC=$(wildcard ${TEX_D}/*.tex) ${BIB_SRC}
-TEX_DST=$(patsubst %,${TEX_D}/${STEM}.%,aux bbl pdf toc)
-DOCS_IGNORES=$(patsubst %,${TEX_D}/%,${STEM}.tex frontmatter.tex macros.tex settings.tex) ${BIB_SRC}
-DOCS_SRC=$(filter-out ${DOCS_IGNORES},${TEX_SRC})
-DOCS_DST=$(patsubst ${TEX_D}/%.tex,${DOCS_D}/%.html,${DOCS_SRC}) ${DOCS_D}/bib.html ${DOCS_D}/${STEM}.bib
-DOCS_ALL=${DOCS_D}/${STEM}.html ${DOCS_D}/${STEM}.epub ${DOCS_D}/${STEM}.mobi ${DOCS_D}/${STEM}.pdf
+# Check that language is set.  Do NOT set 'LANG', as that would override the platform's LANG setting.
+ifndef lang
+$(error Must set 'lang' with 'lang=en' or similar.)
+endif
 
 # Tools.
+JEKYLL=jekyll
 LATEX=pdflatex
 BIBTEX=bibtex
 PANDOC=pandoc
-PANDOC_FLAGS=--template=html.pandoc --from=latex --to=html
+PANDOC_FLAGS=--from=markdown --to=latex
+REPO=FIXME
 
-# Phony targets.
-.PHONY: all commands pdf web serve
+# Language-dependent settings.
+DIR_MD=_${lang}
+DIR_TEX=tex/${lang}
+DIR_INC=${DIR_TEX}/inc
+DIR_WEB=_site/${lang}
+WORDS_SRC=misc/${lang}.txt
 
-# default target
+# Filesets.
+ALL_MD=$(wildcard ${DIR_MD}/*.md)
+BIB_SRC=${DIR_TEX}/book.bib
+CHAPTERS_MD=$(filter-out ${DIR_MD}/bib.md ${DIR_MD}/index.md,${ALL_MD})
+CHAPTERS_TEX=$(patsubst ${DIR_MD}/%.md,${DIR_INC}/%.tex,${CHAPTERS_MD})
+ALL_TEX=${CHAPTERS_TEX} ${DIR_TEX}/book.tex ${DIR_TEX}/frontmatter.tex
+CHAPTERS_HTML=$(patsubst ${DIR_MD}/%.md,${DIR_WEB}/%.html,${ALL_MD})
+ALL_HTML=all-${lang}.html
+
+# Controls
+.PHONY : commands serve site bib crossref clean
 all : commands
 
-## commands   : show all commands.
+## commands    : show all commands.
 commands :
-	@grep -E '^##' Makefile | sed -e 's/## //g'
+	@grep -h -E '^##' Makefile | sed -e 's/## //g'
 
-## pdf        : build PDF versions of book.
-pdf : ${TEX_D}/${STEM}.pdf
+## serve       : run a local server.
+serve : files/crossref.js
+	${JEKYLL} serve -I
 
-${TEX_DST} : ${TEX_SRC}
-	@cd ${TEX_D} \
-	&& ${LATEX} ${STEM} \
-	&& ${BIBTEX} ${STEM} \
-	&& ${LATEX} ${STEM} \
-	&& ${LATEX} ${STEM} \
-	&& ${LATEX} ${STEM}
+## site        : build files but do not run a server.
+site : files/crossref.js
+	${JEKYLL} build
 
-## web        : make web-ready versions of book (HTML, EPUB, and MOBI).
-web : ${DOCS_ALL}
-	@jekyll build -s ${DOCS_D}
+## single      : regenerate all-in-one version of book.
+single : ${ALL_HTML}
 
-## serve      : serve HTML on port 4000.
-serve : ${DOCS_ALL}
-	@jekyll serve -s ${DOCS_D} -I
+${ALL_HTML} : _config.yml files/crossref.js bin/mergebook.py
+	bin/mergebook.py ${lang} _config.yml files/crossref.js ${DIR_WEB} > $@
 
-${DOCS_D}/%.html : ${TEX_D}/%.tex ${TEX_D}/${STEM}.aux ${BIN_D}/ltx2html-pre.py ${BIN_D}/ltx2html-post.py
-	cat ${TEX_D}/macros.tex $< \
-	| ${BIN_D}/ltx2html-pre.py ${TEX_D}/${STEM}.aux \
-	| ${PANDOC} ${PANDOC_FLAGS} -o - --metadata title="$$(fgrep -e '\chapter' $< | head -n 1 | sed -e 's/\\chapter{//g' -e 's/}\\label.*//g')" \
-	| ${BIN_D}/ltx2html-post.py \
-	> $@
+## pdf         : build PDF version of book.
+pdf : ${DIR_TEX}/book.pdf
 
-${DOCS_D}/bib.html : ${TEX_D}/${STEM}.bbl ${BIN_D}/bbl2html-pre.py ${BIN_D}/bbl2html-post.py
-	${BIN_D}/bbl2html-pre.py $< \
-	| ${PANDOC} ${PANDOC_FLAGS} -o - --metadata title="Bibliography" \
-	| ${BIN_D}/bbl2html-post.py ${BIB_SRC} \
-	> $@
+## tex         : generate LaTeX for book, but don't compile to PDF.
+tex : ${CHAPTERS_TEX}
 
-${DOCS_D}/${STEM}.bib : ${BIB_SRC}
-	@cp $< $@
+${DIR_TEX}/book.pdf : ${ALL_TEX} ${BIB_SRC}
+	@cd ${DIR_TEX} \
+	&& ${LATEX} book \
+	&& ${BIBTEX} book \
+	&& ${LATEX} book \
+	&& ${LATEX} book \
+	&& ${LATEX} book
 
-${DOCS_D}/${STEM}.html : ${DOCS_DST} ${BIN_D}/mergebook.py
-	${BIN_D}/mergebook.py ${TITLE} ${TEX_D}/${STEM}.tex ${DOCS_D} \
-	> $@
-
-${DOCS_D}/${STEM}.epub : ${DOCS_D}/${STEM}.html
+${DIR_INC}/%.tex : ${DIR_MD}/%.md _config.yml bin/texpre.py bin/texpost.py _includes/links.md
+	mkdir -p ${DIR_INC} && \
 	cat $< \
-	| ${BIN_D}/unheader.py \
-	| ${PANDOC} -o $@ --resource-path=${DOCS_D} --metadata title=${TITLE} --title=${TITLE}
+	| bin/texpre.py _config.yml \
+	| ${PANDOC} ${PANDOC_FLAGS} -o - \
+	| bin/texpost.py _includes/links.md \
+	> $@
 
-${DOCS_D}/${STEM}.mobi : ${DOCS_D}/${STEM}.html
-	cat $< \
-	| ${BIN_D}/unheader.py \
-	| ${PANDOC} -o $@ --resource-path=${DOCS_D} --metadata title=${TITLE} --title=${TITLE}
+## bib         : rebuild Markdown bibliography from BibTeX source.
+bib : ${DIR_MD}/bib.md
 
-${DOCS_D}/${STEM}.pdf : ${TEX_D}/${STEM}.pdf
-	cp $< $@
+${DIR_MD}/bib.md : ${BIB_SRC} bin/bib2md.py
+	bin/bib2md.py ${lang} < $< > $@
+
+## crossref    : rebuild cross-reference file.
+crossref : files/crossref.js
+
+files/crossref.js : bin/crossref.py _config.yml ${ALL_MD}
+	bin/crossref.py ${DIR_MD} < _config.yml > files/crossref.js
 
 ## ----------------------------------------
 
-## exercises  : count exercises per chapter.
-exercises :
-	@${BIN_D}/exercises.py ${TEX_D}/${STEM}.tex
+## check       : check everything.
+check :
+	@echo "CHARACTERS"
+	@make lang=${lang} checkchars
+	@echo "CITATIONS"
+	@make lang=${lang} checkcites
+	@echo "GLOSSARY"
+	@make lang=${lang} checkgloss
+	@echo "LABELS"
+	@make lang=${lang} checklabels
+	@echo "LINKS"
+	@make lang=${lang} checklinks
+	@echo "TOC"
+	@make lang=${lang} checktoc
 
-## fixme      : find and count things that need to be fixed.
-fixme :
-	@fgrep -e '\fixme' --exclude ${TEX_D}/macros.tex ${TEX_SRC}
-	@echo 'small:' $$(fgrep -e '\fixme{small}' ${TEX_SRC} | wc -l)
-	@echo 'medium:' $$(fgrep -e '\fixme{medium}' ${TEX_SRC} | wc -l)
-	@echo 'large:' $$(fgrep -e '\fixme{large}' ${TEX_SRC} | wc -l)
+## checkchars  : look for non-ASCII characters.
+checkchars :
+	@bin/checkchars.py ${ALL_MD}
 
-## issues     : create single-page view of all GitHub issues.
+## checkcites  : list all missing bibliography entries.
+checkcites : ${BIB_SRC} ${CHAPTERS_TEX}
+	@bin/checkcites.py --missing ${BIB_SRC} ${CHAPTERS_TEX}
+
+## checkgloss  : check that all glossary entries are defined and used.
+checkgloss :
+	@bin/checkgloss.py ${ALL_MD}
+
+## checklabels : make sure all labels conform to standards.
+checklabels : ${CHAPTERS_TEX}
+	@bin/checklabels.py ${CHAPTERS_TEX}
+
+## checklinks  : check that all links in source Markdown resolve.
+checklinks :
+	@bin/checklinks.py _includes/links.md ${ALL_MD}
+
+## checktoc    : check consistency of tables of contents.
+checktoc :
+	@bin/checktoc.py _config.yml ${DIR_TEX}/book.tex ${ALL_MD}
+
+## ----------------------------------------
+
+## authors     : list all authors.
+authors :
+	@bin/authors.py ${BIB_SRC}
+
+## issues      : create single-page view of all GitHub issues.
 issues :
-	@${BIN_D}/issues.py ${REPO} | ${PANDOC} -o issues.html -
+	@bin/issues.py ${REPO} | ${PANDOC} -o issues.html -
 
-## labels     : make sure all labels conform to standards.
-labels :
-	@${BIN_D}/checklabels.py ${TEX_SRC}
+## pages       : count pages per chapter.
+pages : ${DIR_TEX}/book.toc
+	@bin/pages.py < ${DIR_TEX}/book.toc
 
-## pages      : count pages per chapter.
-pages : ${TEX_D}/${STEM}.toc
-	@${BIN_D}/pages.py < ${TEX_D}/${STEM}.toc
+## publishers  : list all publishers.
+publishers :
+	@bin/fields.py ${BIB_SRC} publisher
 
-## spelling   : check spelling.
+## spelling    : check spelling.
 spelling :
 	@grep bibnote ${BIB_SRC} \
-	| cat - ${DOCS_SRC} \
+	| cat - ${CHAPTERS_MD} \
 	| aspell --mode=tex list \
 	| sort \
 	| uniq \
-	| comm -2 -3 - words.txt
+	| comm -2 -3 - ${WORDS_SRC}
 
-## vocabulary : list all words used in all chapters.
-vocabulary :
-	@cd tex && detex -w ${STEM}.tex | sed -e "s:'s$$::g" | grep -v '<Picture' | sort | uniq -c | sort -n -r
-
-## words      : count words per chapter.
-words :
-	@wc -w ${DOCS_SRC} | sort -n -r
-
-## ----------------------------------------
-
-## authors    : list all authors.
-authors :
-	@${BIN_D}/authors.py ${BIB_SRC}
-
-## bibfiles   : check missing or unused papers - requires DIR=/some/path as command-line argument.
-bibfiles :
-	@${BIN_D}/bibfiles.py ${DIR} ${BIB_SRC}
-
-## classify   : classify bibliography entry types.
-classify :
-	@${BIN_D}/classify.py ${BIB_SRC}
-
-## missing    : list all missing bibliography entries.
-missing :
-	@${BIN_D}/checkcites.py --missing ${BIB_SRC} ${TEX_SRC}
-
-## publishers : list all publishers.
-publishers :
-	@${BIN_D}/fields.py ${BIB_SRC} publisher
-
-## titlelen   : list entry titles by length.
-titlelen :
-	@${BIN_D}/titlelen.py ${BIB_SRC}
-
-## undone     : find bibliography entries that don't yet have notes.
-undone :
-	@${BIN_D}/undone.py ${BIB_SRC}
-
-## unused     : list all unused bibliography entries.
+## unused      : list all unused bibliography entries.
 unused :
-	@${BIN_D}/checkcites.py --unused ${BIB_SRC} ${TEX_SRC}
+	@bin/checkcites.py --unused ${BIB_SRC} ${CHAPTERS_TEX}
 
-## venues     : list all publication venues.
-venues :
-	@${BIN_D}/fields.py ${BIB_SRC} booktitle
-	@${BIN_D}/fields.py ${BIB_SRC} journal
+## words       : count words per chapter.
+words :
+	@wc -w ${CHAPTERS_MD} | sort -n -r
 
-## yearlabels : make sure bibliography labels and years line up.
-yearlabels :
-	@${BIN_D}/yearlabels.py ${BIB_SRC}
-
-## years      : CSV histogram of publication years.
+## years       : CSV histogram of publication years.
 years :
-	@${BIN_D}/years.py ${BIB_SRC}
+	@bin/years.py ${BIB_SRC}
 
 ## ----------------------------------------
 
-## mismatch   : identify leftover HTML files.
-mismatch :
-	@${BIN_D}/mismatch.py ${STEM} ${DOCS_D} ${DOCS_DST}
-
-## clean      : clean up junk files.
+## clean       : clean up junk files.
 clean :
-	@rm -rf _site
-	@rm -f tex/${STEM}.pdf
-	@find . -name '*.aux' -exec rm {} \;
-	@find . -name '*.bbl' -exec rm {} \;
-	@find . -name '*.blg' -exec rm {} \;
-	@find . -name '*.log' -exec rm {} \;
-	@find . -name '*.out' -exec rm {} \;
-	@find . -name '*.toc' -exec rm {} \;
-	@find . -name '*~' -exec rm {} \;
-	@find . -name .DS_Store -exec rm {} \;
+	@rm -r -f _site ${CHAPTERS_TEX} */*.aux */*.bbl */*.blg */*.log */*.out */*.toc
+	@find . -name '*~' -delete
+	@find . -name .DS_Store -prune -delete
+	@find . -name '__pycache__' -prune -delete
+	@rm -r -f ${DIR_INC}
 
-## nonascii   : look for non-ASCII characters.
-nonascii :
-	@${BIN_D}/nonascii.py ${TEX_SRC}
-
-## settings   : show values of variables.
+## settings    : show macro values.
 settings :
-	@echo 'STEM "'${STEM}'"'
-	@echo 'REPO "'${REPO}'"'
-	@echo 'LATEX "'${LATEX}'"'
-	@echo 'BIBTEX "'${BIBTEX}'"'
-	@echo 'PANDOC "'${PANDOC}'"'
-	@echo 'PANDOC_FLAGS "'${PANDOC_FLAGS}'"'
-	@echo 'TEX_D "'${TEX_D}'"'
-	@echo 'DOCS_D "'${DOCS_D}'"'
-	@echo 'WEB_D "'${WEB_D}'"'
-	@echo 'TEX_SRC "'${TEX_SRC}'"'
-	@echo 'TEX_DST "'${TEX_DST}'"'
-	@echo 'DOCS_IGNORES "'${DOCS_IGNORES}'"'
-	@echo 'DOCS_SRC "'${DOCS_SRC}'"'
-	@echo 'DOCS_DST "'${DOCS_DST}'"'
-	@echo 'DOCS_ALL "'${DOCS_ALL}'"'
+	@echo "JEKYLL=${JEKYLL}"
+	@echo "LATEX=${LATEX}"
+	@echo "BIBTEX=${BIBTEX}"
+	@echo "PANDOC=${PANDOC}"
+	@echo "PANDOC_FLAGS=${PANDOC_FLAGS}"
+	@echo "REPO=${REPO}"
+	@echo "DIR_MD=${DIR_MD}"
+	@echo "DIR_TEX=${DIR_TEX}"
+	@echo "DIR_INC=${DIR_INC}"
+	@echo "DIR_WEB=${DIR_WEB}"
+	@echo "BIB_SRC=${BIB_SRC}"
+	@echo "WORDS_SRC=${WORDS_SRC}"
+	@echo "CHAPTERS_MD=${CHAPTERS_MD}"
+	@echo "CHAPTERS_TEX=${CHAPTERS_TEX}"
+	@echo "CHAPTERS_HTML=${CHAPTERS_HTML}"
